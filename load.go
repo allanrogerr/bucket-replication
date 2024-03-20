@@ -5,13 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	miniogo "github.com/minio/minio-go/v7"
 	"os"
 	"path"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	miniogo "github.com/minio/minio-go/v7"
 )
 
 var dryRun bool
@@ -34,6 +35,7 @@ type CopyState struct {
 	count    uint64
 	failCnt  uint64
 	wg       sync.WaitGroup
+	logWg    sync.WaitGroup
 }
 
 type copyErr struct {
@@ -42,7 +44,6 @@ type copyErr struct {
 }
 
 func (m *CopyState) queueUploadTask(obj objInfo) {
-	m.wg.Add(1) // Add worker to wait group upon queueing
 	m.objectCh <- obj
 }
 
@@ -88,6 +89,7 @@ func (c *CopyState) getFailCount() uint64 {
 func (c *CopyState) addWorker(ctx context.Context) {
 	// Add a new worker.
 	go func() {
+		defer c.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
@@ -110,11 +112,12 @@ func (c *CopyState) addWorker(ctx context.Context) {
 	}()
 }
 func (c *CopyState) finish(ctx context.Context) {
+	close(c.objectCh)
 	c.wg.Wait() // wait on workers to finish
 
-	close(c.objectCh)
 	close(c.failedCh)
 	close(c.logCh)
+	c.logWg.Wait()
 
 	if !dryRun {
 		logMsg(fmt.Sprintf("Copied %d objects, %d failures", c.getCount(), c.getFailCount()))
@@ -124,10 +127,13 @@ func (c *CopyState) init(ctx context.Context) {
 	if c == nil {
 		return
 	}
+	c.wg.Add(copyConcurrent)
 	for i := 0; i < copyConcurrent; i++ {
 		c.addWorker(ctx)
 	}
+	c.logWg.Add(1)
 	go func() {
+		defer c.logWg.Done()
 		f, err := os.OpenFile(path.Join(dirPath, getFileName(failCopyFile, "")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 		if err != nil {
 			logDMsg("could not create + copy_fails.txt", err)
@@ -140,10 +146,8 @@ func (c *CopyState) init(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				c.wg.Done() // Remove worker from wait group upon task exit
 				return
 			case o, ok := <-c.failedCh:
-				c.wg.Done() // Remove worker from wait group upon task completion
 				if !ok {
 					return
 				}
@@ -155,7 +159,11 @@ func (c *CopyState) init(ctx context.Context) {
 			}
 		}
 	}()
+
+	c.logWg.Add(1)
 	go func() {
+		defer c.logWg.Done()
+
 		f, err := os.OpenFile(path.Join(dirPath, getFileName(logCopyFile, "")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 		if err != nil {
 			logDMsg("could not create + copy_log.txt", err)
@@ -168,10 +176,8 @@ func (c *CopyState) init(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				c.wg.Done() // Remove worker from wait group upon task exit
 				return
 			case obj, ok := <-c.logCh:
-				c.wg.Done() // Remove worker from wait group upon task completion
 				if !ok {
 					return
 				}
