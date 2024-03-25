@@ -51,11 +51,14 @@ then
 else
 	for marker in $purge_identifiers;
 	do
+		total=$((total+1))
 		# Get bucket and prefix to purge
 		IFS="_" read -ra purge_identifier <<< "$marker"
 		if [[ ${#purge_identifier[@]} -ne 2 ]];
 		then
 			echo Could not derive bucket and prefix to be purged from "$purge_identifier"
+			failed_prefix=$((failed_prefix+1))
+			failed_marker=$((failed_marker+1))
 			continue
 		fi
 		purge_bucket=${purge_identifier[0]}
@@ -126,7 +129,7 @@ else
 	done
 fi
 
-data="{\"failed_prefix\": ${failed_prefix}, \"failed_marker\": ${failed_marker}, \"purged_prefix\": ${purged_prefix}, \"purged_marker\": ${purged_marker}, \"total\": ${#purge_identifiers[@]}}"
+data="{\"failed_prefix\": ${failed_prefix}, \"failed_marker\": ${failed_marker}, \"purged_prefix\": ${purged_prefix}, \"purged_marker\": ${purged_marker}, \"total\": ${total}}"
 echo "$data"
 if [ -n "${webhook}" ];
 then
