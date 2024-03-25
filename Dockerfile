@@ -19,16 +19,18 @@ COPY . /opt/replicate
 COPY drrepl.sh /drrepl.sh
 COPY setup-cron.sh /setup-cron.sh
 COPY tag.sh /tag.sh
+COPY purge.sh /purge.sh
 
 RUN chmod +x /drrepl.sh
 RUN chmod +x /setup-cron.sh
 RUN chmod +x /tag.sh
+RUN chmod +x /purge.sh
 
 RUN go build -v -o replicate .
 RUN mv /opt/replicate/replicate /drrepltool
 RUN chmod +x /drrepltool
 
 # Schedule
-RUN apt-get update && apt-get install cron -y
+RUN apt-get update && apt-get install cron -y && apt-get install jq -y
 
 WORKDIR /

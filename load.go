@@ -5,13 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	miniogo "github.com/minio/minio-go/v7"
 	"os"
 	"path"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	miniogo "github.com/minio/minio-go/v7"
 )
 
 var dryRun bool
@@ -42,7 +43,6 @@ type copyErr struct {
 }
 
 func (m *CopyState) queueUploadTask(obj objInfo) {
-	m.wg.Add(1) // Add worker to wait group upon queueing
 	m.objectCh <- obj
 }
 
@@ -86,8 +86,10 @@ func (c *CopyState) getFailCount() uint64 {
 
 // addWorker creates a new worker to process tasks
 func (c *CopyState) addWorker(ctx context.Context) {
+	c.wg.Add(1)
 	// Add a new worker.
 	go func() {
+		defer c.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
@@ -109,10 +111,10 @@ func (c *CopyState) addWorker(ctx context.Context) {
 		}
 	}()
 }
-func (c *CopyState) finish(ctx context.Context) {
-	c.wg.Wait() // wait on workers to finish
 
+func (c *CopyState) finish(ctx context.Context) {
 	close(c.objectCh)
+	c.wg.Wait() // wait on workers to finish
 	close(c.failedCh)
 	close(c.logCh)
 
@@ -120,6 +122,7 @@ func (c *CopyState) finish(ctx context.Context) {
 		logMsg(fmt.Sprintf("Copied %d objects, %d failures", c.getCount(), c.getFailCount()))
 	}
 }
+
 func (c *CopyState) init(ctx context.Context) {
 	if c == nil {
 		return
@@ -128,7 +131,7 @@ func (c *CopyState) init(ctx context.Context) {
 		c.addWorker(ctx)
 	}
 	go func() {
-		f, err := os.OpenFile(path.Join(dirPath, getFileName(failCopyFile, "")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		f, err := os.OpenFile(path.Join(dirPath, getFileName(failCopyFile, "")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
 			logDMsg("could not create + copy_fails.txt", err)
 			return
@@ -140,10 +143,8 @@ func (c *CopyState) init(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				c.wg.Done() // Remove worker from wait group upon task exit
 				return
 			case o, ok := <-c.failedCh:
-				c.wg.Done() // Remove worker from wait group upon task completion
 				if !ok {
 					return
 				}
@@ -156,7 +157,7 @@ func (c *CopyState) init(ctx context.Context) {
 		}
 	}()
 	go func() {
-		f, err := os.OpenFile(path.Join(dirPath, getFileName(logCopyFile, "")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		f, err := os.OpenFile(path.Join(dirPath, getFileName(logCopyFile, "")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
 			logDMsg("could not create + copy_log.txt", err)
 			return
@@ -168,10 +169,8 @@ func (c *CopyState) init(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				c.wg.Done() // Remove worker from wait group upon task exit
 				return
 			case obj, ok := <-c.logCh:
-				c.wg.Done() // Remove worker from wait group upon task completion
 				if !ok {
 					return
 				}
@@ -183,7 +182,6 @@ func (c *CopyState) init(ctx context.Context) {
 			}
 		}
 	}()
-
 }
 
 var errObjectNotFound = errors.New("The specified key does not exist.")
@@ -197,6 +195,7 @@ func isMethodNotAllowedErr(err error) bool {
 	}
 	return false
 }
+
 func copyObject(ctx context.Context, si objInfo) error {
 	obj, err := srcClient.GetObject(ctx, si.bucket, si.object, miniogo.GetObjectOptions{
 		VersionID: si.versionID,

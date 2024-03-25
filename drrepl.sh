@@ -10,8 +10,8 @@ function init() {
     bucket="$1"
     prefix="$2"
     ts="$(date +%s)"
-    datafile="$ts.$bucket-$prefix.txt"
-    targetdatafile="$ts.$bucket-$prefix-target.txt"
+    datafile="$ts.$bucket-$(echo $prefix | sed 's/\//\-/g').txt"
+    targetdatafile="$ts.$bucket-$(echo $prefix | sed 's/\//\-/g')-target.txt"
 }
 
 function main() {
@@ -29,7 +29,7 @@ function main() {
         echo "unable to list the entries from the target"
         exit 255
     fi
-    
+
     if ! cmp -s "${datafile}" "${targetdatafile}"; then
         echo "the list is different; please retry"
         exit 255
